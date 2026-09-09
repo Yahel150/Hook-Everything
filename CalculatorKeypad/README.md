@@ -2,6 +2,12 @@
 
 A DLL hook that swaps Calculator's displayed digits, changing both keypad labels and display text.
 
+
+
+https://github.com/user-attachments/assets/5484aa98-cd25-4083-8f27-22729765dced
+
+
+
 ## How It Works
 
 ### 1. Choosing the Functions
@@ -58,7 +64,7 @@ This visually exchanges the keypad's `1 2 3` and `7 8 9` rows. It changes text o
 With a compatible `calc.exe`, an injector, and the compiled DLL in the same folder:
 
 ```powershell
-.\injector.exe .\calc.exe "$PWD\CalculatorKeypadHook.dll"
+.\injector.exe .\calc.exe CalculatorKeypadHook.dll
 ```
 
 ## Source and Compatibility
