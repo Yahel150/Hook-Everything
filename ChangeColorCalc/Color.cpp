@@ -62,7 +62,7 @@ void setHook() {
     *(char*)f = 0xEB;
     *((char*)(f)+1) = 0xf9;
 
-    VirtualProtect((char*)f - 5, 0x7, PAGE_EXECUTE_READ, &lpProtect);
+    VirtualProtect((char*)f - 5, 0x7, lpProtect, &lpProtect);
     // jump to f from setTextHook 
     back_addr = (LPVOID)((char*)f + 2);
     log_file << "hook set up succesfull" << endl;

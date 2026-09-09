@@ -70,7 +70,7 @@ void setHook() {
     JumpTo = (LPVOID)((char*)&UpdateWindow);
     VirtualProtect(IAT_ADDRESS, 0x4, PAGE_EXECUTE_READWRITE, &lpProtect);
     memcpy(IAT_ADDRESS, &JumpTo, 0x4);
-    VirtualProtect(IAT_ADDRESS, 0x4, PAGE_EXECUTE_READWRITE, &lpProtect);
+    VirtualProtect(IAT_ADDRESS, 0x4, lpProtect, &lpProtect);
 
 
 }
