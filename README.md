@@ -2,7 +2,6 @@
 
 An educational collection of Windows C++ experiments that modify classic Calculator, Notepad, Minesweeper, and Solitaire using DLL injection, API hooking, and executable patching.
 
-**Suggested project name: Win32 Hook Lab.** It describes the focus on practical experiments with Windows APIs and classic 32-bit applications.
 
 ## Project overview
 
@@ -22,9 +21,7 @@ Each folder's README explains its implementation and usage. Some folders also in
 
 ### Analyze the target
 
-Find where the application handles the behavior to change: drawing text, retrieving keyboard messages, rendering cards, or checking a game rule. Inspecting PE headers and imports identifies the executable's architecture and imported functions. Disassembly and debugging connect these functions to visible behavior and help locate internal game data.
-
-The folder guides describe analysis with IDA. The Solitaire analysis also used Python to inspect PE structures, plus `objdump` and Visual Studio's `dumpbin` to inspect x86 instructions.
+Find where the application handles the behavior to change: drawing text, retrieving keyboard messages, rendering cards, or checking a game rule. Inspecting PE headers and imports identifies the executable's architecture and imported functions. Disassembly and debugging connect these functions to visible behavior and help locate internal game data. The folder guides describe analysis with IDA. 
 
 For an IAT hook, calculate the imported function entry's offset relative to the executable's image base. Add that offset to the actual loaded base at runtime. These offsets remain specific to the executable being analyzed.
 
@@ -67,8 +64,6 @@ The color example patches instructions near an API's entry instead of replacing 
 ### Calculator text colors
 
 A five-byte jump immediately before `gdi32!SetTextColor` and a short backward jump at its entry redirect execution to an assembly handler. The handler replaces the color argument with a random 24-bit value, then continues past the patched entry instruction. A new color is selected on each intercepted call.
-
-This assumes a compatible x86 hotpatch layout, including the available bytes before the function. Different Windows versions may not provide that layout.
 
 ### Reversed Calculator text
 
@@ -116,25 +111,18 @@ Use the normal layout when playing: cosmetic layouts do not move clickable regio
 
 ## Build and run
 
-Use Windows and Visual Studio with **Desktop development with C++** and a Windows SDK. Build the injector and DLL for **Win32/x86**, matching the supplied applications. Project availability varies by folder; standalone sources that include `pch.h` need a DLL project with the corresponding precompiled-header setup. The color example requires MSVC x86 inline assembly support.
-
 Run from the example's folder, passing both the executable path and the DLL path. For the color demo:
 
 ```powershell
-.\injector.exe .\calc.exe "$PWD\ColorDll.dll"
+.\injector.exe .\calc.exe ColorDll.dll
 ```
 
 For the tracked Solitaire example, from the repository root:
 
 ```powershell
 cd .\SolitaireHook
-.\injector.exe .\sol.exe "$PWD\SolitaireHookDll.dll"
+.\injector.exe .\sol.exe SolitaireHookDll.dll
 ```
 
 Keep `cards.dll` beside `sol.exe`. Launch Peter Pan from its folder so `PeterPan.txt` can be found. Close the target before replacing its loaded DLL, rebuild, and launch again to test source changes.
 
-## Compatibility and scope
-
-These examples target the supplied classic executables. Hardcoded IAT offsets, internal structures, control IDs, and instruction layouts are version-specific. They are not drop-in hooks for current Windows Calculator or Notepad; a different executable requires checking those assumptions again.
-
-Most changes last only for the injected process's lifetime. The No-Lose example uses a separately patched executable. Included binaries may need rebuilding after source changes.
