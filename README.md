@@ -1,4 +1,4 @@
-# Hook Everything
+# WinHook-Lab
 
 An educational collection of Windows C++ experiments that modify classic Calculator, Notepad, Minesweeper, and Solitaire using DLL injection, API hooking, and executable patching.
 
