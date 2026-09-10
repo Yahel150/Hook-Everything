@@ -1,29 +1,25 @@
 # Solitaire Hooks
 
-A Win32 DLL that adds visual effects and small gameplay aids to the supplied classic Solitaire executable. All hook logic is in [SolitaireHook.cpp](SolitaireHook.cpp): custom layouts, random table colors, editable score labels, Peek Mode, and move hints.
+A Win32 DLL that adds visual effects and small gameplay aids to the supplied classic Solitaire executable. All hook logic is in 
+[SolitaireHook.cpp](SolitaireHook.cpp): custom layouts, random table colors, editable score labels, Peek Mode, and move hints.
+  
+
+
+https://github.com/user-attachments/assets/38aacec7-708d-42c8-b0ca-44eb41ca7c48
+
+
+
+https://github.com/user-attachments/assets/26b428c8-96bf-4d8d-b9d1-6f850fbe953f
+
 
 ## 1. Using the hook
 
 ### Build and launch
-
 Keep `sol.exe`, `cards.dll`, and the generated hook DLL in this folder. The standalone build requires Visual Studio's Desktop development with C++ tools and a Windows SDK.
 
-From PowerShell in this folder:
-
 ```powershell
-.\build.cmd
-.\run.cmd
+.\injector.exe .\sol.exe SolitaireHook.dll
 ```
-
-`build.cmd` selects the x86 compiler and builds both `SolitaireHook.dll` and `injector.exe`. `run.cmd` launches the game through the injector. You can also launch it directly with:
-
-```powershell
-.\injector.exe .\sol.exe "$PWD\SolitaireHook.dll"
-```
-
-Opening `sol.exe` by itself does not load the hook. Close every hooked instance before rebuilding, then launch again to load the new DLL.
-
-To use an existing Visual Studio DLL project, select **Win32**, use `SolitaireHook.cpp` as the project's `dllmain.cpp`, and keep its normal precompiled-header setup. Compile only one copy of the hook source.
 
 ### Keyboard shortcuts
 
@@ -95,151 +91,44 @@ For a custom label:
 4. Click **Save** or press Enter to apply it. Click **Cancel** or press Esc to keep the previous label.
 
 Letters typed in the editor are text rather than hook shortcuts. If the score is not visible, enable Standard scoring in **Game > Options**. Labels and colors are session settings; they are not saved for the next launch.
+## 2. analyzing the binary
 
-## 2. Investigating and implementing the hook
+### Card drawing and game data
 
-### Tools used
+`sol.exe` calls `cards.dll!cdtDrawExt` with the card image, drawing mode, position, size, and background color. Its drawing wrapper at `0x01001F45` passes the real card ID for face-up cards, but substitutes a card-back image for hidden cards. Peek Mode therefore reads the original card records instead of using the back-image argument.
 
-The investigation combined static analysis with focused runtime checks:
+The game pointer is stored at executable offset `0x7170`. The game contains 13 pile pointers starting at `+0x6C`: stock, waste, four foundations, and seven tableau columns. Each pile stores its card count at `+0x1C` and 12-byte card records starting at `+0x24`.
 
-- **Python and `struct`:** read the PE headers and import table to identify the executable's architecture, preferred image base, imported functions, and IAT offsets.
-- **GNU `objdump` through WSL:** inspected x86 assembly around drawing calls during the initial investigation.
-- **Visual Studio `dumpbin /disasm`:** produced a local disassembly used to trace card rendering, game initialization, pile layouts, and move-rule code.
-- **Visual Studio's x86 C++ compiler and linker:** built the DLL, injector, and local test programs. Linker map files identified DLL symbols during runtime checks.
-- **Win32 runtime test programs:** injected the DLL into a separate test process, inspected memory using `ReadProcessMemory`, and exercised keyboard messages.
-- **Windows computer-use screenshots and interaction:** checked the visible layouts, table colors, Peek preview, hint borders, and score-label dialog.
+A card record contains its value and x/y coordinates. `value & 0x7FFF` gives the card ID; dividing this ID by four gives the rank, and its remainder gives the suit. Bit `0x8000` marks a face-up card. Peek Mode draws these records face-up without changing that bit.
 
-The bundled PDFs in other project folders discuss IDA, but this Solitaire implementation was investigated with the tools above; it does not depend on an IDA project.
+### Move hints
 
-### Discovery 1: rendering is separate from game state
+The foundation check at `0x01004531` and column check at `0x01004279` show the rank and suit rules. The hook applies these rules to the top face-up cards in the waste and tableau: Aces start foundations, foundations increase by rank within one suit, columns decrease by rank with alternating colors, and only Kings enter empty columns. It returns the first supported move and highlights its source and destination.
 
-The supplied `sol.exe` is a 32-bit PE executable with preferred image base `0x01000000`. Its imports showed three useful boundaries:
+### Hooked functions
 
-- `cards.dll` provides card drawing through `cdtDrawExt` and `cdtDraw`.
-- `gdi32.dll` provides brushes, text measurement, and drawing operations.
-- `user32.dll` provides the message loop, window controls, and painting lifecycle.
+Each hook replaces a four-byte entry in the executable's Import Address Table (IAT), saves the original function address, and restores the original memory protection after writing the new pointer.
 
-This suggested using IAT hooks for the visual effects and input controls, while reading the game's own data for Peek Mode and hints. A drawing function alone does not describe every rule or every hidden card.
+| Function | IAT offset | Use |
+| --- | --- | --- |
+| `cards!cdtDrawExt` | `0x101C` | Intercept card drawing for the custom layouts. |
+| `gdi32!CreateSolidBrush` | `0x1084` | Replace the initial green table brush. |
+| `user32!DrawTextW` | `0x1190` | Draw the custom score label. |
+| `gdi32!GetTextExtentPoint32W` | `0x1050` | Reserve the correct width for that label. |
+| `user32!GetMessageW` | `0x1164` | Handle keyboard shortcuts and label-editor input. |
+| `user32!EndPaint` | `0x10DC` | Draw shifted cards, the Peek preview, and hint borders after the board repaint. |
 
-### Discovery 2: the drawing call loses the hidden card's identity
+Shifted cards are drawn after the normal repaint because changing their coordinates inside the original draw call can place them outside its clipping region. Changing the table color also updates the cached brush at offset `0x737C`, the background color at `0x7348`, and the window-class brush.
 
-The original card-drawing wrapper at preferred address `0x01001F45` reads a card record and checks bit `0x8000` in its value.
+`setHook1()` installs the card hook, `setHook2()` installs the brush hook, and `setHook3()` installs the text, measurement, input, and paint hooks. The score-label editor uses standard Win32 text-box and button controls. All hook logic remains in `SolitaireHook.cpp`.
 
-For a face-up card, it strips that bit and passes the card ID to `cdtDrawExt`. For a face-down card, it substitutes the selected card-back image number, stored at executable offset `0x7008`.
+The addresses above use the preferred base `0x01000000`; IAT offsets are added to the actual loaded base. These layouts apply to the supplied `sol.exe` and `cards.dll`, not arbitrary Solitaire versions.
 
-This was the key to Peek Mode: simply changing the renderer's mode from back to face would display the wrong card, because the argument may describe the back image rather than the hidden card. The real identity must be read from the original record.
-
-Each record occupies 12 bytes:
-
-| Offset in the card record | Meaning |
-| --- | --- |
-| `+0x00` | 16-bit card value |
-| `+0x02` | Padding |
-| `+0x04` | x coordinate |
-| `+0x08` | y coordinate |
-
-The card value encodes:
-
-```text
-card ID = value & 0x7FFF
-rank    = card ID / 4       (Ace = 0, King = 12)
-suit    = card ID % 4
-face-up = (value & 0x8000) != 0
-```
-
-The DLL reads these values but does not write to card identities or face-up flags.
-
-### Discovery 3: the board is a collection of 13 piles
-
-Tracing initialization at preferred address `0x01005581` revealed the game object and its pile-pointer array. The current game pointer is stored at executable offset `0x7170`.
-
-The pile order is:
-
-| Index | Pile |
-| --- | --- |
-| `0` | Stock |
-| `1` | Waste |
-| `2–5` | Four foundations |
-| `6–12` | Seven tableau columns |
-
-Within the game object, the active pile count is at `+0x64` and the pointer array starts at `+0x6C`. Each pile contains geometry, a card count at `+0x1C`, and its card records starting at `+0x24`.
-
-The disassembly also showed per-game and per-pile handler pointers used to dispatch operations. The hook does not replace those internal handlers: its small `Game`, `Pile`, and `Card` structures expose only the layout needed to read the board.
-
-A live test confirmed 13 piles, 52 cards total, and 21 hidden tableau cards in a fresh deal. This connected the static memory-layout interpretation to actual game data.
-
-### Discovery 4: the original rules explain legal destinations
-
-The foundation check at preferred address `0x01004531` compares rank and suit. The column check at `0x01004279` requires an opposite-color destination one rank higher, with a special case for Kings entering empty columns.
-
-The implementation expresses those rules in `fitsFoundation` and `fitsColumn`. In this card encoding, suits whose IDs XOR to `1` or `2` have opposite colors. The code checks the destination's face-up state before suggesting a column move.
-
-`findHint` scans the waste and columns, examining only their top face-up cards. For each candidate it tries foundations, then other columns, and stops at the first match. This keeps the feature short; it is neither a complete move enumerator nor a solver.
-
-### Installing the IAT hooks
-
-The Import Address Table stores pointers to imported functions. Each `setHook` follows the same template used elsewhere in this project:
-
-1. Find the executable and target DLL modules.
-2. Save the original API address with `GetProcAddress`.
-3. Locate the target IAT entry using an offset from the loaded executable base.
-4. Temporarily make the four-byte entry writable with `VirtualProtect`.
-5. Replace it with the hook function's address.
-6. Restore the saved memory protection.
-
-The hook calls the saved original function when normal rendering or message handling is needed. It changes the target process's IAT in memory, not the system DLL on disk.
-
-| Installer | Imported function | IAT offset | Purpose |
-| --- | --- | --- | --- |
-| `setHook1` | `cards!cdtDrawExt` | `0x101C` | Intercept card drawing and suppress cards that will be drawn at shifted positions. |
-| `setHook2` | `gdi32!CreateSolidBrush` | `0x1084` | Replace the initial green table brush. |
-| `setHook3` | `user32!DrawTextW` | `0x1190` | Substitute the score label. |
-| `setHook3` | `gdi32!GetTextExtentPoint32W` | `0x1050` | Measure the replacement label correctly. |
-| `setHook3` | `user32!GetMessageW` | `0x1164` | Handle the shared keyboard shortcuts and editor input. |
-| `setHook3` | `user32!EndPaint` | `0x10DC` | Draw the preview, shifted cards, and hint borders after the game's repaint. |
-
-`DllMain` initializes the loaded executable base and color seed, then calls `setHook1()`, `setHook2()`, and `setHook3()` during `DLL_PROCESS_ATTACH`.
-
-The injector creates Solitaire suspended, writes the DLL path into the target process, and starts a remote thread calling `LoadLibraryA`. It waits for that thread before resuming Solitaire's main thread. All feature implementations remain in one DLL source file.
-
-### Discovery 5: clipping explains disappearing shifted cards
-
-The first layout attempt changed y directly inside `cdtDrawExt`. Visual testing showed that the shifted card could disappear: its new position fell outside the game's existing drawing or clipping region.
-
-The revised approach skips that original draw and draws the shifted card after `EndPaint`, using the main window's device context. The same stage draws the hint outlines. Their coordinates come from the source card and destination pile or card.
-
-Peek Mode also uses this final drawing stage. It clears the tableau preview area and redraws the seven columns from the real records, using face-up mode and 20-pixel vertical spacing. Returning from Peek Mode requests a normal repaint; no game-state rollback is needed because no card state was changed.
-
-### Discovery 6: brushes and text widths are cached separately
-
-**Table color:** intercepting brush creation changes the initial color, but a later key press must update objects the game already created. `changeColor` replaces the cached brush at offset `0x737C`, updates the background color at `0x7348`, updates the window-class background brush, and requests a repaint. This keeps the table and card backgrounds aligned.
-
-**Score label:** replacing the text alone was insufficient for long labels. The original score layout still measured `Score: ` and used that width when arranging and clearing the status area. The additional `GetTextExtentPoint32W` hook measures the same replacement text that `DrawTextW` draws, so the layout reserves its actual width.
-
-**Extra repainting:** the message hook originally called `refresh()` on every ordinary click. That explicitly invalidated the full board. Installing a `GetMessageW` hook does not itself require such repainting. The revised code refreshes when a visual setting changes or a displayed hint needs clearing, rather than on every normal click.
-
-### The score-label editor
-
-E creates a small owned window using ordinary Win32 controls: a static prompt, an edit box, and Save/Cancel buttons. Its window procedure saves or discards the text and re-enables the game when the editor closes.
-
-The shared message hook routes editor messages before Solitaire's own shortcut processing. This is why typing `score` into the box does not trigger S, C, or E as game controls. No separate UI framework or extra hook DLL is used.
-
-## Validation and limits
-
-Builds used the x86 Visual Studio toolchain. Focused tests checked foundation rules, opposite-color 3-on-4 moves across all suit pairs, hidden destinations, empty-column Kings, text measurement, key toggling, editor save/cancel behavior, and unchanged card values during Peek Mode.
-
-Runtime injection tests checked the original five IAT hooks and P/H/L behavior. Visual checks covered the lowered-card correction, Peek preview, random table color, foundation hint/no-hint behavior, and editor appearance. The later column-hint, long-label measurement, and reduced-repaint changes were built and tested with focused checks; they did not receive another full visual regression session.
-
-The offsets and structures are specific to the supplied 32-bit executable. They are not portable to modern Solitaire or arbitrary `sol.exe` versions. The shifted layouts are cosmetic, hints cover only the moves listed above, and there is no automatic solver.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `SolitaireHook.cpp` | All hook functions, board helpers, and label-editor code. |
-| `pch.h` | Minimal header for the standalone build. |
 | `injector.cpp` | Waiting-injector template copied into this folder. |
-| `build.cmd` | Build the Win32 DLL and injector. |
-| `run.cmd` | Launch the game through the injector. |
 | `sol.exe`, `cards.dll` | Supplied game and card-rendering library. |
-| `SolitaireHook.dll`, `injector.exe` | Generated binaries, ignored by Git. |
